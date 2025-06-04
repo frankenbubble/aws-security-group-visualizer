@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AWS Network Visualizer</title>
+  <script src="https://unpkg.com/vis-network@9.1.9/dist/vis-network.min.js"></script>
+  <link href="https://unpkg.com/vis-network@9.1.9/dist/vis-network.min.css" rel="stylesheet" type="text/css" />
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f0f2f5;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden; 
+    }
+    #controls, #secondaryFiltersContainer {
+      padding: 10px 15px;
+      background: #ffffff;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      border-bottom: 1px solid #d1d5db;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      flex-shrink: 0; 
+    }
+    #secondaryFiltersContainer {
+        border-top: 1px dashed #e0e0e0;
+    }
+    #controls label, #controls button, #controls select, #controls span,
+    #secondaryFiltersContainer label, #secondaryFiltersContainer input, #secondaryFiltersContainer select, #secondaryFiltersContainer button {
+      font-size: 13px;
+    }
+    #controls input[type="file"] {
+      border: 1px solid #ccc;
+      padding: 5px;
+      border-radius: 4px;
+    }
+
+    #controls button, 
+    #secondaryFiltersContainer button {
+      padding: 7px 10px;
+      border-radius: 5px;
+      border: 1px solid #007bff;
+      background-color: #007bff;
+      color: white;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
+    #controls button:hover, 
+    #secondaryFiltersContainer button:hover {
+      background-color: #0056b3;
+    }
+    #controls button:disabled, 
+    #secondaryFiltersContainer button:disabled {
+      background-color: #cccccc;
+      border-color: #cccccc;
+      cursor: not-allowed;
+    }
+
+    #controls select, 
+    #secondaryFiltersContainer select {
+      padding: 7px 10px;
+      border-radius: 5px;
+      border: 1px solid #ccc; 
+      background-color: #fff; 
+      color: #333; 
+      cursor: pointer;
+    }
+    #controls select:disabled { 
+      background-color: #e9ecef;
+      color: #6c757d;
+      border-color: #ced4da;
+      cursor: not-allowed;
+    }
+    #secondaryFiltersContainer select[multiple] { 
+        height: 70px; 
+        min-width: 180px;
+    }
+     #secondaryFiltersContainer input[type="text"] { 
+        padding: 7px 10px;
+        border-radius: 5px;
+        border: 1px solid #ccc;
+        font-size: 13px;
+    }
+
+    #status {
+      margin-left: auto; 
+      font-style: italic;
+      color: #555;
+    }
+    
+    #mainContentContainer {
+        display: flex;
+        flex-grow: 1;
+        overflow: hidden; /* Prevent this container from causing scrollbars */
+    }
+
+    #network {
+      flex-grow: 1; 
+      border-top: 1px solid #ccc; /* Kept for consistency if #unusedSgList is on top/bottom */
+      background-color: #fdfdfd;
+      overflow: hidden; 
+      position: relative; 
+      border-right: 1px solid #d1d5db; /* Separator line */
+    }
+    #unusedSgListContainer {
+        width: 250px; /* Adjust width as needed */
+        flex-shrink: 0;
+        padding: 10px;
+        background-color: #f8f9fa;
+        overflow-y: auto;
+        border-top: 1px solid #ccc; 
+    }
+    #unusedSgListContainer h4 {
+        margin-top: 0;
+        margin-bottom: 10px;
+        font-size: 14px;
+        color: #333;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 5px;
+    }
+    #unusedSgListContainer ul {
+        list-style-type: none;
+        padding-left: 0;
+        margin: 0;
+    }
+    #unusedSgListContainer li {
+        font-size: 12px;
+        padding: 4px 0;
+        border-bottom: 1px solid #f0f0f0;
+        color: #555;
+    }
+    #unusedSgListContainer li:last-child {
+        border-bottom: none;
+    }
+
+
+    .vis-tooltip {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        padding: 8px;
+        background-color: #333;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        font-size: 13px;
+    }
+    .modal {
+      display: none; position: fixed; z-index: 1000; left: 0; top: 0;
+      width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); 
+    }
+    .modal-content {
+      background-color: #fefefe; margin: 10% auto; padding: 20px; border: 1px solid #888;
+      width: 80%; max-width: 600px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); position: relative;
+    }
+    .modal-close-btn {
+      color: #aaa; float: right; font-size: 28px; font-weight: bold; line-height: 1;
+    }
+    .modal-close-btn:hover, .modal-close-btn:focus {
+      color: black; text-decoration: none; cursor: pointer;
+    }
+    .modal-title { margin-top: 0; margin-bottom: 15px; font-size: 18px; color: #333; }
+    .modal-body {
+      font-size: 14px; line-height: 1.6; max-height: 60vh; overflow-y: auto;
+      white-space: pre-wrap; word-wrap: break-word; background-color: #f9f9f9;
+      padding: 10px; border-radius: 4px; border: 1px solid #eee;
+    }
+    .help-icon {
+        cursor: pointer;
+        color: #007bff;
+        font-weight: bold;
+        margin-left: 3px;
+        display: inline-block;
+        border: 1px solid #007bff;
+        border-radius: 50%;
+        width: 16px;
+        height: 16px;
+        line-height: 16px;
+        text-align: center;
+        font-size: 12px;
+    }
+    .cli-command {
+        background-color: #e9ecef;
+        padding: 8px;
+        border-radius: 4px;
+        font-family: 'Courier New', Courier, monospace;
+        margin-bottom: 10px;
+        display: block;
+        word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <label>Instances JSON: <input type="file" id="instancesFile" accept=".json"> <span class="help-icon" id="instancesHelpIcon">?</span></label>
+  <label>SGs JSON: <input type="file" id="sgsFile" accept=".json"> <span class="help-icon" id="sgsHelpIcon">?</span></label>
+  <button id="generateBtn" disabled>Generate Diagram</button>
+  <label for="stateFilter">State:</label>
+  <select id="stateFilter" disabled>
+    <option value="all">All States</option>
+    <option value="running">Running</option>
+    <option value="stopped">Stopped</option>
+    <option value="pending">Pending</option>
+    <option value="terminated">Terminated</option>
+    <option value="shutting-down">Shutting-down</option>
+  </select>
+  <label for="instanceFilter">Focus Instance:</label>
+  <select id="instanceFilter" disabled><option value="">-- Select Instance --</option></select>
+  <span id="status">Drop AWS CLI JSON outputs</span>
+</div>
+
+<div id="secondaryFiltersContainer" style="display: none;">
+  <label>Protocol: <input type="text" id="protocolFilterInput" placeholder="e.g., tcp, all"></label>
+  <label>Port: <input type="text" id="portFilterInput" placeholder="e.g., 80, 443"></label>
+  <label>Filter by Specific Connected Node(s): <select id="connectedNodeFilterSelect" multiple size="3"><option value="" disabled>-- Select Nodes --</option></select></label>
+  <button id="applySecondaryFiltersBtn">Apply Sub-Filters</button>
+  <button id="resetSecondaryFiltersBtn">Reset Sub-Filters</button>
+</div>
+
+<div id="mainContentContainer">
+    <div id="network"></div>
+    <div id="unusedSgListContainer">
+        <h4>Unused Security Groups</h4>
+        <ul id="unusedSgList">
+            <!-- Unused SGs will be listed here -->
+        </ul>
+    </div>
+</div>
+
+
+<!-- Node Detail Modal -->
+<div id="nodeDetailModal" class="modal">
+  <div class="modal-content">
+    <span id="modalCloseBtn" class="modal-close-btn">&times;</span>
+    <h3 id="modalTitle">Node Details</h3>
+    <pre id="modalBody" class="modal-body"></pre>
+  </div>
+</div>
+
+<!-- Help Modal -->
+<div id="helpModal" class="modal">
+  <div class="modal-content">
+    <span id="helpModalCloseBtn" class="modal-close-btn">&times;</span>
+    <h3 id="helpModalTitle">Generating JSON Files</h3>
+    <div id="helpModalBody" class="modal-body" style="white-space:normal;">
+        <p>To generate the required JSON files, use the AWS CLI:</p>
+        <p><strong>For Instances JSON:</strong></p>
+        <code class="cli-command">aws ec2 describe-instances > describe-instances.json</code>
+        <p><strong>For Security Groups JSON:</strong></p>
+        <code class="cli-command">aws ec2 describe-security-groups > describe-security-groups.json</code>
+        <p>Ensure your AWS CLI is configured with the necessary permissions and region.</p>
+    </div>
+  </div>
+</div>
+
+
+<script>
+  let instancesJson = null, sgsJson = null;
+  let network;
+  let globalNodes = new vis.DataSet();
+  let globalEdges = new vis.DataSet();
+  
+  let baseFilteredNodes = new vis.DataSet();
+  let baseFilteredEdges = new vis.DataSet();
+  let currentFocusedInstanceId = null;
+
+  let instanceMap = {}; 
+  let sgToInstances = {}; 
+  let allSgIdsFromInstances = new Set(); 
+  let isGraphReady = false;
+
+  const instanceFileInput = document.getElementById('instancesFile');
+  const sgFileInput = document.getElementById('sgsFile');
+  const generateBtn = document.getElementById('generateBtn');
+  const stateFilterSelect = document.getElementById('stateFilter');
+  const instanceFilterSelect = document.getElementById('instanceFilter');
+  const status = document.getElementById('status');
+  const unusedSgListUl = document.getElementById('unusedSgList');
+
+
+  const secondaryFiltersContainer = document.getElementById('secondaryFiltersContainer');
+  const protocolFilterInput = document.getElementById('protocolFilterInput');
+  const portFilterInput = document.getElementById('portFilterInput');
+  const connectedNodeFilterSelect = document.getElementById('connectedNodeFilterSelect');
+  const applySecondaryFiltersBtn = document.getElementById('applySecondaryFiltersBtn');
+  const resetSecondaryFiltersBtn = document.getElementById('resetSecondaryFiltersBtn');
+
+  const nodeDetailModal = document.getElementById('nodeDetailModal');
+  const modalCloseBtn = document.getElementById('modalCloseBtn');
+  const modalTitle = document.getElementById('modalTitle');
+  const modalBody = document.getElementById('modalBody');
+
+  const helpModal = document.getElementById('helpModal');
+  const helpModalCloseBtn = document.getElementById('helpModalCloseBtn');
+  const instancesHelpIcon = document.getElementById('instancesHelpIcon');
+  const sgsHelpIcon = document.getElementById('sgsHelpIcon');
+
+
+  function loadJsonFromFile(inputElement, callback) {
+    const file = inputElement.files[0];
+    if (!file) { status.textContent = "No file selected."; return; }
+    if (file.type !== "application/json") {
+        status.textContent = `Error: ${file.name} is not a JSON file.`; inputElement.value = ""; return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => {
+      try { callback(JSON.parse(e.target.result)); } 
+      catch (error) {
+        status.textContent = `Error parsing JSON from ${file.name}: ${error.message}`; inputElement.value = ""; 
+        if (inputElement.id === 'instancesFile') instancesJson = null; if (inputElement.id === 'sgsFile') sgsJson = null;
+        checkFilesReady();
+      }
+    };
+    reader.onerror = () => { status.textContent = `Error reading file ${file.name}.`; inputElement.value = ""; };
+    reader.readAsText(file);
+  }
+
+  function checkFilesReady() {
+    if (instancesJson && sgsJson) {
+      processInitialData(); 
+      generateBtn.disabled = false;
+      stateFilterSelect.disabled = false;
+      status.textContent = "Ready to generate diagram.";
+    } else {
+      generateBtn.disabled = true; stateFilterSelect.disabled = true; instanceFilterSelect.disabled = true;
+      if (!instancesJson && !sgsJson) status.textContent = "Drop AWS CLI JSON outputs";
+      else if (!instancesJson) status.textContent = "Waiting for Instances JSON...";
+      else status.textContent = "Waiting for Security Groups JSON...";
+    }
+  }
+  
+  function processInitialData() {
+    instanceMap = {}; sgToInstances = {}; allSgIdsFromInstances.clear();
+    const sgIdToNameMap = new Map();
+    if (sgsJson && sgsJson.SecurityGroups) {
+        for (const sgData of sgsJson.SecurityGroups) {
+            sgIdToNameMap.set(sgData.GroupId, `SG: ${sgData.GroupName || sgData.GroupId}`);
+        }
+    }
+
+    if (instancesJson && instancesJson.Reservations) {
+      for (const res of instancesJson.Reservations) {
+        for (const inst of res.Instances) {
+          const id = inst.InstanceId;
+          const nameTag = inst.Tags?.find(t => t.Key === "Name")?.Value;
+          const displayName = nameTag ? `${nameTag} (${id.substring(0,8)}...)` : id;
+          let memberOfSGsList = [];
+          if (inst.SecurityGroups) {
+            for (const sgRef of inst.SecurityGroups) {
+              sgToInstances[sgRef.GroupId] = sgToInstances[sgRef.GroupId] || [];
+              sgToInstances[sgRef.GroupId].push(id);
+              allSgIdsFromInstances.add(sgRef.GroupId); 
+              memberOfSGsList.push({id: sgRef.GroupId, name: sgIdToNameMap.get(sgRef.GroupId) || `SG: ${sgRef.GroupId}` });
+            }
+          }
+          instanceMap[id] = { name: displayName, originalName: nameTag || id, data: inst, memberOfSGs: memberOfSGsList };
+        }
+      }
+    }
+  }
+  
+  function getNodeColorByState(instanceData) {
+    if (!instanceData || !instanceData.State) return { background: "#CFD8DC", border: "#90A4AE" }; 
+    const state = instanceData.State.Name?.toLowerCase();
+    if (state === "running") return { background: "#4CAF50", border: "#388E3C" }; 
+    if (state === "stopped") return { background: "#B0BEC5", border: "#78909C" }; 
+    if (state === "terminated" || state === "shutting-down") return { background: "#F44336", border: "#D32F2F" }; 
+    if (state === "pending") return { background: "#2196F3", border: "#1976D2" }; 
+    return { background: "#CFD8DC", border: "#90A4AE" }; 
+  }
+
+  function generateDiagram() {
+    if (!instancesJson || !sgsJson) { status.textContent = "Error: Missing JSON data."; return; }
+    globalNodes.clear(); globalEdges.clear();
+    unusedSgListUl.innerHTML = ''; // Clear previous unused SG list
+    status.textContent = "Generating diagram...";
+    isGraphReady = false; 
+    secondaryFiltersContainer.style.display = 'none';
+    instanceFilterSelect.value = ""; 
+    currentFocusedInstanceId = null;
+
+    const selectedState = stateFilterSelect.value;
+    const tempNodeProperties = []; // Will only contain instance nodes now
+    const visibleInstanceIds = new Set(); 
+
+    if (instancesJson && instancesJson.Reservations) {
+      for (const res of instancesJson.Reservations) {
+        for (const inst of res.Instances) { 
+          if (selectedState === "all" || inst.State.Name.toLowerCase() === selectedState) {
+            const id = inst.InstanceId;
+            visibleInstanceIds.add(id); 
+            const displayName = instanceMap[id]?.name || id; 
+            const nodeColor = getNodeColorByState(inst); 
+            tempNodeProperties.push({ 
+              id, label: displayName, 
+              title: `Instance: ${instanceMap[id]?.originalName || id}\nID: ${id}\nType: ${inst.InstanceType}\nState: ${inst.State?.Name}`,
+              shape: "box", color: nodeColor, font: { size: 11, multi: true, vadjust: -5 }, nodeType: 'instance'
+            });
+          }
+        }
+      }
+    }
+
+    // Populate Unused SG List
+    const sgIdToNameMap = new Map(); 
+    if (sgsJson && sgsJson.SecurityGroups) {
+        for (const sgData of sgsJson.SecurityGroups) {
+            const sgDisplayName = `SG: ${sgData.GroupName || sgData.GroupId}`;
+            sgIdToNameMap.set(sgData.GroupId, sgDisplayName);
+            if (!allSgIdsFromInstances.has(sgData.GroupId)) { 
+                 const li = document.createElement('li');
+                 li.textContent = `${sgDisplayName} (${sgData.GroupId})`;
+                 li.title = `ID: ${sgData.GroupId}\nDescription: ${sgData.Description || 'N/A'}`;
+                 unusedSgListUl.appendChild(li);
+            }
+        }
+    }
+
+
+    if (tempNodeProperties.length === 0) { 
+        status.textContent = "No instances to display based on current filters."; 
+        instanceFilterSelect.disabled = true; 
+        // If network exists, clear it
+        if (network) {
+            network.setData({nodes: new vis.DataSet(), edges: new vis.DataSet()});
+        }
+        return; 
+    }
+
+    const radius = Math.max(200, tempNodeProperties.length * 30);
+    const angleStep = tempNodeProperties.length > 0 ? (2 * Math.PI) / tempNodeProperties.length : 0;
+    tempNodeProperties.forEach((props, i) => globalNodes.add({...props, x: radius*Math.cos(i*angleStep), y: radius*Math.sin(i*angleStep), fixed: {x:true, y:true}}));
+
+    instanceFilterSelect.innerHTML = '<option value="">-- Select Instance --</option>';
+    const sortedVisibleInstances = Object.entries(instanceMap)
+        .filter(([id]) => visibleInstanceIds.has(id)) 
+        .sort(([,a],[,b]) => a.originalName.localeCompare(b.originalName));
+    
+    for (const [id, data] of sortedVisibleInstances) {
+      const opt = document.createElement("option");
+      opt.value = id; opt.textContent = data.name;
+      instanceFilterSelect.appendChild(opt);
+    }
+    instanceFilterSelect.disabled = sortedVisibleInstances.length === 0;
+
+
+    if (sgsJson && sgsJson.SecurityGroups) {
+      for (const sg of sgsJson.SecurityGroups) {
+        const destIds = (sgToInstances[sg.GroupId] || []).filter(id => visibleInstanceIds.has(id)); 
+        if (sg.IpPermissions) {
+          for (const rule of sg.IpPermissions) {
+            const proto = rule.IpProtocol === "-1" ? "all" : rule.IpProtocol;
+            const port = (rule.FromPort != null && rule.ToPort != null) ? (rule.FromPort === rule.ToPort ? `${rule.FromPort}` : `${rule.FromPort}-${rule.ToPort}`) : "any";
+            const sgNameForRule = sgIdToNameMap.get(sg.GroupId) || `SG: ${sg.GroupId}`;
+            const edgeLabel = `${proto}: ${port}\n(via ${sgNameForRule.substring(0,28)}${sgNameForRule.length > 28 ? '...' : ''})`;
+            if (rule.UserIdGroupPairs) {
+              for (const srcSg of rule.UserIdGroupPairs) {
+                const srcIds = (sgToInstances[srcSg.GroupId] || []).filter(id => visibleInstanceIds.has(id)); 
+                const srcSgNameForRule = sgIdToNameMap.get(srcSg.GroupId) || `SG: ${srcSg.GroupId}`;
+                for (const srcId of srcIds) {
+                  for (const destId of destIds) {
+                    if (srcId !== destId) { 
+                      globalEdges.add({
+                        from: srcId, to: destId, label: edgeLabel, 
+                        protocolPortData: `${proto}:${port}`, sgNameData: sgNameForRule, 
+                        title: `Rule: ${sgNameForRule}\nAllows: ${proto}:${port}\nFrom: ${srcSgNameForRule}\nTo: ${sgNameForRule}`,
+                        arrows: "to", font: { align: "middle", size: 9 }, 
+                        color: { color: "#6495ED", highlight: "#4169E1", hover: "#4169E1" }, 
+                        smooth: { type: "cubicBezier", forceDirection: "horizontal", roundness: 0.3 }
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    const container = document.getElementById("network");
+    const data = { nodes: globalNodes, edges: globalEdges };
+    const options = {
+      physics: false, interaction: { hover: true, dragNodes: false, dragView: true, zoomView: true, tooltipDelay: 200 },
+      nodes: { borderWidth: 1, borderWidthSelected: 2, font: { color: '#333333' } },
+      edges: { width: 1, hoverWidth: 0.5, selectionWidth: 1.5, smooth: { enabled: true, type: "cubicBezier", forceDirection: 'horizontal', roundness: 0.2 } },
+    };
+    if (network) { network.destroy(); }
+    network = new vis.Network(container, data, options);
+    
+    network.on("click", function (params) {
+        if (params.nodes.length > 0) {
+            const nodeId = params.nodes[0];
+            const nodeDataFromNetwork = network.body.data.nodes.get(nodeId); 
+            const instanceDetailsFromMap = instanceMap[nodeId]; 
+
+            if (nodeDataFromNetwork?.nodeType === 'unused-sg') { // This case should no longer occur as they are not in the network
+                return; 
+            }
+
+            if (instanceDetailsFromMap) {
+                let modalText = "";
+                const rawInstData = instanceDetailsFromMap.data;
+                const isInFilteredView = !!currentFocusedInstanceId && baseFilteredNodes.get(nodeId); 
+
+                if (isInFilteredView && nodeDataFromNetwork) { 
+                    modalText = nodeDataFromNetwork.label; 
+                } else { 
+                    modalText = `Instance: ${instanceDetailsFromMap.originalName || nodeId}\nID: ${nodeId}`;
+                }
+                
+                if (rawInstData) {
+                    modalText += `\n\nInstance Type: ${rawInstData.InstanceType || 'N/A'}`;
+                    modalText += `\nState: ${rawInstData.State?.Name || 'N/A'}`;
+                    if(rawInstData.PrivateIpAddress) modalText += `\nPrivate IP: ${rawInstData.PrivateIpAddress}`;
+                    if(rawInstData.PublicIpAddress) modalText += `\nPublic IP: ${rawInstData.PublicIpAddress}`;
+                }
+
+                if (instanceDetailsFromMap.memberOfSGs && instanceDetailsFromMap.memberOfSGs.length > 0) {
+                    modalText += "\n\nMember of Security Groups:";
+                    instanceDetailsFromMap.memberOfSGs.forEach(sg => {
+                        modalText += `\n- ${sg.name}`; 
+                    });
+                }
+                
+                modalTitle.textContent = `Details for ${instanceDetailsFromMap.originalName || nodeId}`;
+                modalBody.textContent = modalText; 
+                nodeDetailModal.style.display = "block";
+            }
+        }
+    });
+
+    network.fit({ animation: { duration: 800, easingFunction: "easeInOutQuad" } });
+    isGraphReady = true; 
+    status.textContent = `Diagram ready (${globalNodes.length} nodes, ${globalEdges.length} connections).`;
+  }
+  
+  instanceFilterSelect.addEventListener("change", function () {
+    if (!isGraphReady || !network) { status.textContent = "Generate diagram first."; this.value = ""; return; }
+    currentFocusedInstanceId = this.value; 
+
+    if (!currentFocusedInstanceId) { 
+      status.textContent = "Displaying full diagram based on state filter...";
+      generateDiagram(); 
+      secondaryFiltersContainer.style.display = 'none'; resetSecondaryFilterInputs(); return;
+    }
+
+    const selectedInstanceName = instanceMap[currentFocusedInstanceId]?.name || currentFocusedInstanceId;
+    status.textContent = `Filtering for ${selectedInstanceName}...`;
+    
+    baseFilteredNodes.clear(); baseFilteredEdges.clear(); 
+    const nodePortDisplayInfo = new Map();
+    const focusedNodeOriginal = globalNodes.get(currentFocusedInstanceId);
+
+    if (!focusedNodeOriginal) { status.textContent = `Error: Instance ${selectedInstanceName} not found.`; this.value = ""; return; }
+
+    const connectedNodesForDropdown = new Map(); 
+
+    globalEdges.forEach(edge => { 
+      let currentEdgeToAdd = null; let connectedNodeId = null;
+      const sgDisplayName = edge.sgNameData || "Unknown SG"; 
+
+      if (edge.from === currentFocusedInstanceId && edge.to !== currentFocusedInstanceId) { 
+        connectedNodeId = edge.to;
+        currentEdgeToAdd = { ...edge, id: edge.id + "_fp", label: sgDisplayName, color: { color: 'green', highlight: '#388E3C' }, smooth: { type: 'straightCross' } };
+        if (!nodePortDisplayInfo.has(currentFocusedInstanceId)) nodePortDisplayInfo.set(currentFocusedInstanceId, { labelLines: new Set() });
+        nodePortDisplayInfo.get(currentFocusedInstanceId).labelLines.add(`Out to ${instanceMap[edge.to]?.originalName || edge.to}: ${edge.protocolPortData} (via ${edge.sgNameData})`);
+        if (!nodePortDisplayInfo.has(edge.to)) nodePortDisplayInfo.set(edge.to, { labelLines: new Set() });
+        nodePortDisplayInfo.get(edge.to).labelLines.add(`In from ${instanceMap[currentFocusedInstanceId]?.originalName || currentFocusedInstanceId}: ${edge.protocolPortData} (via ${edge.sgNameData})`);
+      } else if (edge.to === currentFocusedInstanceId && edge.from !== currentFocusedInstanceId) { 
+        connectedNodeId = edge.from;
+        currentEdgeToAdd = { ...edge, id: edge.id + "_fp", label: sgDisplayName, color: { color: 'red', highlight: '#D32F2F' }, smooth: { type: 'straightCross' } };
+        if (!nodePortDisplayInfo.has(currentFocusedInstanceId)) nodePortDisplayInfo.set(currentFocusedInstanceId, { labelLines: new Set() });
+        nodePortDisplayInfo.get(currentFocusedInstanceId).labelLines.add(`In from ${instanceMap[edge.from]?.originalName || edge.from}: ${edge.protocolPortData} (via ${edge.sgNameData})`);
+        if (!nodePortDisplayInfo.has(edge.from)) nodePortDisplayInfo.set(edge.from, { labelLines: new Set() });
+        nodePortDisplayInfo.get(edge.from).labelLines.add(`Out to ${instanceMap[currentFocusedInstanceId]?.originalName || currentFocusedInstanceId}: ${edge.protocolPortData} (via ${edge.sgNameData})`);
+      } else if (edge.from === currentFocusedInstanceId && edge.to === currentFocusedInstanceId) { 
+         currentEdgeToAdd = { ...edge, id: edge.id + "_fp", label: sgDisplayName, color: { color: 'purple', highlight: '#7B1FA2' }, smooth: { type: 'cubicBezier', roundness: 0.7 } };
+         if (!nodePortDisplayInfo.has(currentFocusedInstanceId)) nodePortDisplayInfo.set(currentFocusedInstanceId, { labelLines: new Set() });
+         nodePortDisplayInfo.get(currentFocusedInstanceId).labelLines.add(`Self: ${edge.protocolPortData} (via ${edge.sgNameData})`);
+      }
+
+      if (currentEdgeToAdd) {
+        baseFilteredEdges.add(currentEdgeToAdd);
+        if (connectedNodeId) {
+          const originalNode = globalNodes.get(connectedNodeId); 
+          if (originalNode && !baseFilteredNodes.get(connectedNodeId)) { 
+             baseFilteredNodes.add({...originalNode }); 
+             if (!connectedNodesForDropdown.has(connectedNodeId)) {
+                connectedNodesForDropdown.set(connectedNodeId, instanceMap[connectedNodeId]?.originalName || connectedNodeId);
+             }
+          }
+        }
+      }
+    });
+    
+    let focusedLabel = focusedNodeOriginal.label.split('\n')[0]; 
+    const focusedInfo = nodePortDisplayInfo.get(currentFocusedInstanceId);
+    if (focusedInfo && focusedInfo.labelLines.size > 0) focusedLabel += '\n' + Array.from(focusedInfo.labelLines).sort().join('\n');
+    
+    if (!baseFilteredNodes.get(currentFocusedInstanceId)) {
+        baseFilteredNodes.add({...focusedNodeOriginal, label: focusedLabel, x: -500, y: 0, fixed: {x:true, y:true}, font: {size:10, multi:true, align:'left', vadjust: -5}});
+    } else {
+        baseFilteredNodes.updateOnly({id: currentFocusedInstanceId, label: focusedLabel, x: -500, y: 0, fixed: {x:true, y:true}, font: {size:10, multi:true, align:'left', vadjust: -5}});
+    }
+
+    const connectedNodesArray = baseFilteredNodes.get({ filter: n => n.id !== currentFocusedInstanceId });
+    const verticalSpacing = Math.max(80, 15 * (focusedInfo?.labelLines.size || 1) + 60) ; 
+    const initialY = -((connectedNodesArray.length - 1) * verticalSpacing) / 2;
+
+    connectedNodesArray.forEach((nodeData, index) => {
+      let connectedNodeDisplayLabel = globalNodes.get(nodeData.id).label.split('\n')[0]; 
+      const connectedInfo = nodePortDisplayInfo.get(nodeData.id);
+      if (connectedInfo && connectedInfo.labelLines.size > 0) connectedNodeDisplayLabel += '\n' + Array.from(connectedInfo.labelLines).sort().join('\n');
+      baseFilteredNodes.updateOnly({id: nodeData.id, label: connectedNodeDisplayLabel, x: 500, y: initialY + index * verticalSpacing, fixed: {x:true, y:true}, font: {size:10, multi:true, align:'left', vadjust: -5}});
+    });
+    
+    updateNetworkView(baseFilteredNodes, baseFilteredEdges, `Filtered for ${selectedInstanceName}.`);
+    secondaryFiltersContainer.style.display = 'flex';
+    populateConnectedNodeFilter(connectedNodesForDropdown); resetSecondaryFilterInputs(); 
+  });
+
+  function resetSecondaryFilterInputs() {
+    protocolFilterInput.value = ""; portFilterInput.value = "";
+    Array.from(connectedNodeFilterSelect.options).forEach(opt => opt.selected = false); 
+  }
+
+  function populateConnectedNodeFilter(nodesMap) {
+    connectedNodeFilterSelect.innerHTML = ''; 
+    const sorted = Array.from(nodesMap.entries()).sort((a,b) => a[1].localeCompare(b[1]));
+    sorted.forEach(([id, name]) => {
+        const opt = document.createElement('option');
+        opt.value = id; opt.textContent = name;
+        connectedNodeFilterSelect.appendChild(opt);
+    });
+  }
+
+  applySecondaryFiltersBtn.addEventListener('click', applyAdvancedFilters);
+  resetSecondaryFiltersBtn.addEventListener('click', () => {
+    resetSecondaryFilterInputs();
+    const selectedInstanceName = instanceMap[currentFocusedInstanceId]?.name || currentFocusedInstanceId;
+    const { nodesWithUpdatedLabels } = rebuildLabelsForView(new vis.DataSet(baseFilteredNodes.get()), baseFilteredEdges, currentFocusedInstanceId);
+    
+    const finalNodesForReset = new vis.DataSet();
+    nodesWithUpdatedLabels.forEach(node => {
+        const baseNode = baseFilteredNodes.get(node.id); 
+        finalNodesForReset.add({...node, x: baseNode.x, y: baseNode.y, fixed: baseNode.fixed, color: baseNode.color }); 
+    });
+    updateNetworkView(finalNodesForReset, baseFilteredEdges, `Sub-filters reset. Showing all connections for ${selectedInstanceName}.`);
+  });
+
+  function applyAdvancedFilters() {
+    if (!currentFocusedInstanceId || baseFilteredNodes.length === 0) { status.textContent = "No primary selection."; return; }
+
+    const protocolQuery = protocolFilterInput.value.trim().toLowerCase();
+    const portQuery = portFilterInput.value.trim();
+    const selectedConnectedNodeOptions = Array.from(connectedNodeFilterSelect.selectedOptions);
+    const selectedConnectedNodeIds = selectedConnectedNodeOptions.map(opt => opt.value).filter(val => val !== "");
+
+    let subFilteredEdges = new vis.DataSet();
+    let subFilteredNodeIds = new Set([currentFocusedInstanceId]); 
+
+    baseFilteredEdges.forEach(edge => {
+        let matches = true;
+        if (selectedConnectedNodeIds.length > 0) { 
+            if (!((edge.from === currentFocusedInstanceId && selectedConnectedNodeIds.includes(edge.to)) || 
+                  (edge.to === currentFocusedInstanceId && selectedConnectedNodeIds.includes(edge.from)))) {
+                matches = false;
+            }
+        }
+        const [edgeProtocol, edgePortRange] = edge.protocolPortData.split(':');
+        if (matches && protocolQuery) {
+            if (edgeProtocol !== 'all' && protocolQuery !== 'all' && !edgeProtocol.includes(protocolQuery)) {
+                matches = false;
+            }
+        }
+        if (matches && portQuery) {
+            if (edgePortRange !== 'any' && !checkPortMatch(edgePortRange, portQuery)) {
+                matches = false;
+            }
+        }
+        if (matches) {
+            subFilteredEdges.add({...edge, id: edge.id + "_sub"}); 
+            subFilteredNodeIds.add(edge.from); subFilteredNodeIds.add(edge.to);
+        }
+    });
+
+    const subFilteredNodesData = baseFilteredNodes.get({ filter: node => subFilteredNodeIds.has(node.id) });
+    let finalSubFilteredNodes = new vis.DataSet(subFilteredNodesData);
+    
+    const { nodesWithUpdatedLabels, edgesWithUpdatedInfo } = rebuildLabelsForView(finalSubFilteredNodes, subFilteredEdges, currentFocusedInstanceId);
+    
+    let nodesToDisplay = new vis.DataSet(); 
+    nodesWithUpdatedLabels.forEach(node => {
+        const baseNode = baseFilteredNodes.get(node.id) || globalNodes.get(node.id); 
+        const color = baseNode ? baseNode.color : getNodeColorByState(instanceMap[node.id]?.data); 
+        nodesToDisplay.add({...node, color: color });
+    });
+
+
+    if (nodesToDisplay.length > 0 && nodesToDisplay.length <= 3 && currentFocusedInstanceId) {
+        const adjustedNodes = new vis.DataSet();
+        const focusedNodeData = nodesToDisplay.get(currentFocusedInstanceId);
+        if (focusedNodeData) adjustedNodes.add({...focusedNodeData, x: -250, y: 0, fixed: {x:true, y:true}}); 
+        
+        const connectedNodesInView = nodesToDisplay.get({filter: n => n.id !== currentFocusedInstanceId});
+        const verticalSpacing = 150;
+        const initialYSmall = -((connectedNodesInView.length - 1) * verticalSpacing) / 2;
+
+        connectedNodesInView.forEach((node, idx) => {
+            adjustedNodes.add({...node, x: 250, y: initialYSmall + idx * verticalSpacing, fixed: {x:true, y:true}});
+        });
+        if (adjustedNodes.length > 0) nodesToDisplay = adjustedNodes;
+    }
+
+
+    const selectedInstanceName = instanceMap[currentFocusedInstanceId]?.name || currentFocusedInstanceId;
+    updateNetworkView(nodesToDisplay, edgesWithUpdatedInfo, `Sub-filter applied for ${selectedInstanceName}.`);
+  }
+
+  function checkPortMatch(edgePortRange, queryPort) {
+    if (edgePortRange === queryPort) return true;
+    if (edgePortRange.includes('-')) {
+        const [start, end] = edgePortRange.split('-').map(Number);
+        const qPort = Number(queryPort);
+        if (!isNaN(qPort) && qPort >= start && qPort <= end) return true;
+    }
+    return false;
+  }
+  
+  function rebuildLabelsForView(currentNodes, currentEdges, focusedId) {
+    const nodePortDisplayInfo = new Map();
+    const nodesWithUpdatedLabels = new vis.DataSet();
+
+    currentEdges.forEach(edge => {
+        const [protocol, port] = edge.protocolPortData.split(':');
+        const fromNodeName = instanceMap[edge.from]?.originalName || edge.from;
+        const toNodeName = instanceMap[edge.to]?.originalName || edge.to;
+        const viaSg = edge.sgNameData || "Unknown SG";
+
+        if (edge.from === focusedId && edge.to !== focusedId) { 
+            if (!nodePortDisplayInfo.has(focusedId)) nodePortDisplayInfo.set(focusedId, { labelLines: new Set() });
+            nodePortDisplayInfo.get(focusedId).labelLines.add(`Out to ${toNodeName}: ${protocol}:${port} (via ${viaSg})`);
+            if (!nodePortDisplayInfo.has(edge.to)) nodePortDisplayInfo.set(edge.to, { labelLines: new Set() });
+            nodePortDisplayInfo.get(edge.to).labelLines.add(`In from ${fromNodeName}: ${protocol}:${port} (via ${viaSg})`);
+        } else if (edge.to === focusedId && edge.from !== focusedId) { 
+            if (!nodePortDisplayInfo.has(focusedId)) nodePortDisplayInfo.set(focusedId, { labelLines: new Set() });
+            nodePortDisplayInfo.get(focusedId).labelLines.add(`In from ${fromNodeName}: ${protocol}:${port} (via ${viaSg})`);
+            if (!nodePortDisplayInfo.has(edge.from)) nodePortDisplayInfo.set(edge.from, { labelLines: new Set() });
+            nodePortDisplayInfo.get(edge.from).labelLines.add(`Out to ${toNodeName}: ${protocol}:${port} (via ${viaSg})`);
+        } else if (edge.from === focusedId && edge.to === focusedId) { 
+             if (!nodePortDisplayInfo.has(focusedId)) nodePortDisplayInfo.set(focusedId, { labelLines: new Set() });
+             nodePortDisplayInfo.get(focusedId).labelLines.add(`Self: ${protocol}:${port} (via ${viaSg})`);
+        }
+    });
+    
+    currentNodes.forEach(node => {
+        const originalNodeGlobal = globalNodes.get(node.id); 
+        if (!originalNodeGlobal) { 
+            nodesWithUpdatedLabels.add(node); 
+            return;
+        }
+        let newLabel = originalNodeGlobal.label.split('\n')[0]; 
+        const portInfo = nodePortDisplayInfo.get(node.id);
+        if (portInfo && portInfo.labelLines.size > 0) {
+            newLabel += '\n' + Array.from(portInfo.labelLines).sort().join('\n');
+        }
+        nodesWithUpdatedLabels.add({...node, label: newLabel }); 
+    });
+    return { nodesWithUpdatedLabels: nodesWithUpdatedLabels, edgesWithUpdatedInfo: currentEdges };
+  }
+
+  function updateNetworkView(nodesToDisplay, edgesToDisplay, statusMessage) {
+    let finalEdges = new vis.DataSet(edgesToDisplay.get()); 
+
+    if (nodesToDisplay.length === 2 && currentFocusedInstanceId) {
+        const nodeIds = nodesToDisplay.getIds();
+        if (nodeIds.length === 2) {
+            const nodeA = nodeIds[0]; const nodeB = nodeIds[1];
+            const isFocusedPair = (nodeA === currentFocusedInstanceId && nodeB !== currentFocusedInstanceId) || 
+                                  (nodeB === currentFocusedInstanceId && nodeA !== currentFocusedInstanceId);
+            
+            if (isFocusedPair) {
+                const edgesBetweenPair = finalEdges.get({
+                    filter: edge => ((edge.from === nodeA && edge.to === nodeB) || (edge.from === nodeB && edge.to === nodeA))
+                });
+
+                if (edgesBetweenPair.length === 2) { 
+                    let firstEdgeDirection = null;
+                    edgesBetweenPair.forEach((edge, index) => {
+                        let updatedSmooth;
+                        if (index === 0) { 
+                            updatedSmooth = { type: 'curvedCW', roundness: 0.2, forceDirection: 'none' };
+                            firstEdgeDirection = (edge.from === currentFocusedInstanceId) ? 'outbound' : 'inbound';
+                        } else { 
+                            if (firstEdgeDirection === 'outbound' && edge.to === currentFocusedInstanceId) { 
+                                updatedSmooth = { type: 'curvedCCW', roundness: 0.2, forceDirection: 'none' };
+                            } else if (firstEdgeDirection === 'inbound' && edge.from === currentFocusedInstanceId) { 
+                                updatedSmooth = { type: 'curvedCCW', roundness: 0.2, forceDirection: 'none' };
+                            } else { 
+                                updatedSmooth = { type: 'curvedCCW', roundness: 0.2, forceDirection: 'none' };
+                            }
+                        }
+                        finalEdges.updateOnly({id: edge.id, smooth: updatedSmooth});
+                    });
+                } else if (edgesBetweenPair.length === 1) { 
+                     finalEdges.updateOnly({id: edgesBetweenPair[0].id, smooth: { type: 'straightCross', roundness: 0 }});
+                }
+            }
+        }
+    }
+    
+    const viewOptions = {
+      physics: false, interaction: { dragNodes: false, dragView: true, zoomView: true, hover: true, tooltipDelay: 200 },
+      edges: { width: 1.5, font: { size: 8, align: 'middle' }, arrows: { to: { enabled: true, scaleFactor: 0.8 } }  },
+      nodes: { borderWidth: 1, borderWidthSelected: 2 }
+    };
+    network.setOptions(viewOptions); 
+    network.setData({ nodes: nodesToDisplay, edges: finalEdges });
+    network.fit({ animation: { duration: 300, easingFunction: "easeInOutQuad" } }); 
+    status.textContent = statusMessage;
+  }
+
+  // Modal close functionality
+  modalCloseBtn.onclick = function() { nodeDetailModal.style.display = "none"; }
+  helpModalCloseBtn.onclick = function() { helpModal.style.display = "none"; }
+  instancesHelpIcon.onclick = function() { helpModal.style.display = "block"; }
+  sgsHelpIcon.onclick = function() { helpModal.style.display = "block"; }
+
+  window.onclick = function(event) { 
+    if (event.target == nodeDetailModal) nodeDetailModal.style.display = "none";
+    if (event.target == helpModal) helpModal.style.display = "none";
+  }
+
+  // Event listeners
+  instanceFileInput.addEventListener('change', e => loadJsonFromFile(e.target, data => { instancesJson = data; checkFilesReady(); }));
+  sgFileInput.addEventListener('change', e => loadJsonFromFile(e.target, data => { sgsJson = data; checkFilesReady(); }));
+  generateBtn.addEventListener("click", generateDiagram);
+  stateFilterSelect.addEventListener('change', generateDiagram); 
+
+</script>
+</body>
+</html>
