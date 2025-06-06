@@ -42,6 +42,7 @@
       border-radius: 4px;
     }
 
+    /* Button Styling */
     #controls button, 
     #secondaryFiltersContainer button {
       padding: 7px 10px;
@@ -63,6 +64,7 @@
       cursor: not-allowed;
     }
 
+    /* Select (Dropdown and Multiselect) Styling */
     #controls select, 
     #secondaryFiltersContainer select {
       padding: 7px 10px;
@@ -88,6 +90,10 @@
         border: 1px solid #ccc;
         font-size: 13px;
     }
+    #secondaryFiltersContainer label input[type="checkbox"] {
+        margin-right: 4px;
+        vertical-align: middle;
+    }
 
     #status {
       margin-left: auto; 
@@ -98,19 +104,19 @@
     #mainContentContainer {
         display: flex;
         flex-grow: 1;
-        overflow: hidden; /* Prevent this container from causing scrollbars */
+        overflow: hidden; 
     }
 
     #network {
       flex-grow: 1; 
-      border-top: 1px solid #ccc; /* Kept for consistency if #unusedSgList is on top/bottom */
+      border-top: 1px solid #ccc; 
       background-color: #fdfdfd;
       overflow: hidden; 
       position: relative; 
-      border-right: 1px solid #d1d5db; /* Separator line */
+      border-right: 1px solid #d1d5db; 
     }
     #unusedSgListContainer {
-        width: 250px; /* Adjust width as needed */
+        width: 250px; 
         flex-shrink: 0;
         padding: 10px;
         background-color: #f8f9fa;
@@ -150,6 +156,7 @@
         border-radius: 4px;
         box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         font-size: 13px;
+        white-space: pre-wrap; 
     }
     .modal {
       display: none; position: fixed; z-index: 1000; left: 0; top: 0;
@@ -222,6 +229,7 @@
   <label>Filter by Specific Connected Node(s): <select id="connectedNodeFilterSelect" multiple size="3"><option value="" disabled>-- Select Nodes --</option></select></label>
   <button id="applySecondaryFiltersBtn">Apply Sub-Filters</button>
   <button id="resetSecondaryFiltersBtn">Reset Sub-Filters</button>
+  <label style="margin-left: 15px;"><input type="checkbox" id="circularFilteredViewCheckbox"> Circular Layout for Filtered</label>
 </div>
 
 <div id="mainContentContainer">
@@ -267,8 +275,8 @@
   let globalNodes = new vis.DataSet();
   let globalEdges = new vis.DataSet();
   
-  let baseFilteredNodes = new vis.DataSet();
-  let baseFilteredEdges = new vis.DataSet();
+  let baseFilteredNodes = new vis.DataSet(); 
+  let baseFilteredEdges = new vis.DataSet(); 
   let currentFocusedInstanceId = null;
 
   let instanceMap = {}; 
@@ -283,6 +291,7 @@
   const instanceFilterSelect = document.getElementById('instanceFilter');
   const status = document.getElementById('status');
   const unusedSgListUl = document.getElementById('unusedSgList');
+  const unusedSgListContainer = document.getElementById('unusedSgListContainer');
 
 
   const secondaryFiltersContainer = document.getElementById('secondaryFiltersContainer');
@@ -291,6 +300,8 @@
   const connectedNodeFilterSelect = document.getElementById('connectedNodeFilterSelect');
   const applySecondaryFiltersBtn = document.getElementById('applySecondaryFiltersBtn');
   const resetSecondaryFiltersBtn = document.getElementById('resetSecondaryFiltersBtn');
+  const circularFilteredViewCheckbox = document.getElementById('circularFilteredViewCheckbox');
+
 
   const nodeDetailModal = document.getElementById('nodeDetailModal');
   const modalCloseBtn = document.getElementById('modalCloseBtn');
@@ -379,15 +390,17 @@
   function generateDiagram() {
     if (!instancesJson || !sgsJson) { status.textContent = "Error: Missing JSON data."; return; }
     globalNodes.clear(); globalEdges.clear();
-    unusedSgListUl.innerHTML = ''; // Clear previous unused SG list
+    unusedSgListUl.innerHTML = ''; 
     status.textContent = "Generating diagram...";
     isGraphReady = false; 
     secondaryFiltersContainer.style.display = 'none';
+    unusedSgListContainer.style.display = 'block'; 
     instanceFilterSelect.value = ""; 
     currentFocusedInstanceId = null;
+    circularFilteredViewCheckbox.checked = false;
 
     const selectedState = stateFilterSelect.value;
-    const tempNodeProperties = []; // Will only contain instance nodes now
+    const tempNodeProperties = []; 
     const visibleInstanceIds = new Set(); 
 
     if (instancesJson && instancesJson.Reservations) {
@@ -401,20 +414,67 @@
             tempNodeProperties.push({ 
               id, label: displayName, 
               title: `Instance: ${instanceMap[id]?.originalName || id}\nID: ${id}\nType: ${inst.InstanceType}\nState: ${inst.State?.Name}`,
-              shape: "box", color: nodeColor, font: { size: 11, multi: true, vadjust: -5 }, nodeType: 'instance'
+              shape: "box", color: nodeColor, font: { size: 11, multi: false }, nodeType: 'instance'
             });
           }
         }
       }
     }
 
-    // Populate Unused SG List
     const sgIdToNameMap = new Map(); 
     if (sgsJson && sgsJson.SecurityGroups) {
         for (const sgData of sgsJson.SecurityGroups) {
-            const sgDisplayName = `SG: ${sgData.GroupName || sgData.GroupId}`;
-            sgIdToNameMap.set(sgData.GroupId, sgDisplayName);
-            if (!allSgIdsFromInstances.has(sgData.GroupId)) { 
+            sgIdToNameMap.set(sgData.GroupId, `SG: ${sgData.GroupName || sgData.GroupId}`);
+        }
+    }
+    
+    const externalTargetSgDetails = new Map();
+    if (sgsJson && sgsJson.SecurityGroups) {
+      for (const sgRuleSource of sgsJson.SecurityGroups) {
+        const instancesUsingThisRuleSourceSg = (sgToInstances[sgRuleSource.GroupId] || []).filter(id => visibleInstanceIds.has(id));
+        if (instancesUsingThisRuleSourceSg.length === 0) continue; 
+
+        if (sgRuleSource.IpPermissions) {
+          for (const rule of sgRuleSource.IpPermissions) {
+            if (rule.UserIdGroupPairs) {
+              for (const targetSgPair of rule.UserIdGroupPairs) {
+                const targetSgId = targetSgPair.GroupId;
+                if (!allSgIdsFromInstances.has(targetSgId)) { 
+                  if (instancesUsingThisRuleSourceSg.length > 0) {
+                    if (!externalTargetSgDetails.has(targetSgId)) {
+                      externalTargetSgDetails.set(targetSgId, {
+                        id: targetSgId,
+                        name: sgIdToNameMap.get(targetSgId) || `SG: ${targetSgId}`,
+                        description: sgsJson.SecurityGroups.find(sg => sg.GroupId === targetSgId)?.Description || 'N/A'
+                      });
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    externalTargetSgDetails.forEach(sgDetail => {
+        const sgLabelSimple = sgDetail.name; 
+        tempNodeProperties.push({
+            id: sgDetail.id,
+            label: sgLabelSimple, 
+            title: `External Target SG: ${sgDetail.name}\nID: ${sgDetail.id}\nDescription: ${sgDetail.description}`, 
+            shape: 'ellipse', 
+            color: { background: '#FFDAB9', border: '#FFA07A' }, 
+            font: { size: 10, multi: false }, 
+            nodeType: 'external-sg'
+        });
+    });
+
+
+    if (sgsJson && sgsJson.SecurityGroups) {
+        for (const sgData of sgsJson.SecurityGroups) {
+            const sgDisplayName = sgIdToNameMap.get(sgData.GroupId) || `SG: ${sgData.GroupId}`;
+            if (!allSgIdsFromInstances.has(sgData.GroupId) && !externalTargetSgDetails.has(sgData.GroupId)) { 
                  const li = document.createElement('li');
                  li.textContent = `${sgDisplayName} (${sgData.GroupId})`;
                  li.title = `ID: ${sgData.GroupId}\nDescription: ${sgData.Description || 'N/A'}`;
@@ -425,12 +485,9 @@
 
 
     if (tempNodeProperties.length === 0) { 
-        status.textContent = "No instances to display based on current filters."; 
+        status.textContent = "No items to display based on current filters."; 
         instanceFilterSelect.disabled = true; 
-        // If network exists, clear it
-        if (network) {
-            network.setData({nodes: new vis.DataSet(), edges: new vis.DataSet()});
-        }
+        if (network) network.setData({nodes: new vis.DataSet(), edges: new vis.DataSet()});
         return; 
     }
 
@@ -451,26 +508,40 @@
     instanceFilterSelect.disabled = sortedVisibleInstances.length === 0;
 
 
+    // *** CORRECTED EDGE CREATION LOGIC ***
     if (sgsJson && sgsJson.SecurityGroups) {
-      for (const sg of sgsJson.SecurityGroups) {
-        const destIds = (sgToInstances[sg.GroupId] || []).filter(id => visibleInstanceIds.has(id)); 
-        if (sg.IpPermissions) {
-          for (const rule of sg.IpPermissions) {
+      for (const destSg of sgsJson.SecurityGroups) { // The SG defining the ingress rule IS THE DESTINATION
+        const destinationNodeIds = (sgToInstances[destSg.GroupId] || []).filter(id => visibleInstanceIds.has(id));
+        if (destinationNodeIds.length === 0) continue; // Skip if this SG isn't on any visible instances
+        
+        if (destSg.IpPermissions) {
+          for (const rule of destSg.IpPermissions) {
             const proto = rule.IpProtocol === "-1" ? "all" : rule.IpProtocol;
             const port = (rule.FromPort != null && rule.ToPort != null) ? (rule.FromPort === rule.ToPort ? `${rule.FromPort}` : `${rule.FromPort}-${rule.ToPort}`) : "any";
-            const sgNameForRule = sgIdToNameMap.get(sg.GroupId) || `SG: ${sg.GroupId}`;
-            const edgeLabel = `${proto}: ${port}\n(via ${sgNameForRule.substring(0,28)}${sgNameForRule.length > 28 ? '...' : ''})`;
+            const destSgName = sgIdToNameMap.get(destSg.GroupId) || `SG: ${destSg.GroupId}`;
+            
             if (rule.UserIdGroupPairs) {
-              for (const srcSg of rule.UserIdGroupPairs) {
-                const srcIds = (sgToInstances[srcSg.GroupId] || []).filter(id => visibleInstanceIds.has(id)); 
-                const srcSgNameForRule = sgIdToNameMap.get(srcSg.GroupId) || `SG: ${srcSg.GroupId}`;
-                for (const srcId of srcIds) {
-                  for (const destId of destIds) {
-                    if (srcId !== destId) { 
+              for (const sourceSgPair of rule.UserIdGroupPairs) { // The SG in the rule pair IS THE SOURCE
+                const sourceSgId = sourceSgPair.GroupId;
+                const sourceSgName = sgIdToNameMap.get(sourceSgId) || `SG: ${sourceSgId}`;
+                let sourceNodeIds = [];
+
+                if (allSgIdsFromInstances.has(sourceSgId)) { // Source is an instance
+                    sourceNodeIds = (sgToInstances[sourceSgId] || []).filter(id => visibleInstanceIds.has(id));
+                } else if (externalTargetSgDetails.has(sourceSgId)) { // Source is an external SG node
+                    sourceNodeIds = [sourceSgId];
+                }
+
+                const edgeLabel = `${proto}: ${port}\n(via ${destSgName.substring(0,28)}${destSgName.length > 28 ? '...' : ''})`;
+
+                for (const fromId of sourceNodeIds) {
+                  for (const toId of destinationNodeIds) {
+                    if (fromId !== toId && globalNodes.get(fromId) && globalNodes.get(toId)) { 
                       globalEdges.add({
-                        from: srcId, to: destId, label: edgeLabel, 
-                        protocolPortData: `${proto}:${port}`, sgNameData: sgNameForRule, 
-                        title: `Rule: ${sgNameForRule}\nAllows: ${proto}:${port}\nFrom: ${srcSgNameForRule}\nTo: ${sgNameForRule}`,
+                        from: fromId, to: toId, label: edgeLabel, 
+                        protocolPortData: `${proto}:${port}`, 
+                        sgNameData: destSgName, // The SG on the destination that allows the traffic
+                        title: `Rule in ${destSgName}\nAllows: ${proto}:${port}\nFrom SG: ${sourceSgName}\nTo SG: ${destSgName}`,
                         arrows: "to", font: { align: "middle", size: 9 }, 
                         color: { color: "#6495ED", highlight: "#4169E1", hover: "#4169E1" }, 
                         smooth: { type: "cubicBezier", forceDirection: "horizontal", roundness: 0.3 }
@@ -499,40 +570,35 @@
             const nodeId = params.nodes[0];
             const nodeDataFromNetwork = network.body.data.nodes.get(nodeId); 
             const instanceDetailsFromMap = instanceMap[nodeId]; 
+            let modalText = "";
 
-            if (nodeDataFromNetwork?.nodeType === 'unused-sg') { // This case should no longer occur as they are not in the network
-                return; 
+            const baseTitle = nodeDataFromNetwork?.title || 
+                             (instanceDetailsFromMap ? `Instance: ${instanceDetailsFromMap.originalName || nodeId}\nID: ${nodeId}` : `Node: ${nodeId}`);
+            modalTitle.textContent = `Details for ${instanceDetailsFromMap?.originalName || nodeDataFromNetwork?.label.split('\n')[0] || nodeId}`;
+            modalBody.textContent = baseTitle; 
+
+            const isInFilteredView = !!currentFocusedInstanceId && baseFilteredNodes.get(nodeId);
+            
+            if (isInFilteredView && nodeDataFromNetwork?.label.includes('\n')) { 
+                 modalBody.textContent += "\n\nConnections (to/from focused):\n" + nodeDataFromNetwork.label.substring(nodeDataFromNetwork.label.indexOf('\n') + 1);
             }
 
-            if (instanceDetailsFromMap) {
-                let modalText = "";
+            if (instanceDetailsFromMap) { 
                 const rawInstData = instanceDetailsFromMap.data;
-                const isInFilteredView = !!currentFocusedInstanceId && baseFilteredNodes.get(nodeId); 
-
-                if (isInFilteredView && nodeDataFromNetwork) { 
-                    modalText = nodeDataFromNetwork.label; 
-                } else { 
-                    modalText = `Instance: ${instanceDetailsFromMap.originalName || nodeId}\nID: ${nodeId}`;
+                 if (rawInstData && !baseTitle.includes("Instance Type:")) { 
+                    modalBody.textContent += `\n\nInstance Type: ${rawInstData.InstanceType || 'N/A'}`;
+                    modalBody.textContent += `\nState: ${rawInstData.State?.Name || 'N/A'}`;
+                    if(rawInstData.PrivateIpAddress) modalBody.textContent += `\nPrivate IP: ${rawInstData.PrivateIpAddress}`;
+                    if(rawInstData.PublicIpAddress) modalBody.textContent += `\nPublic IP: ${rawInstData.PublicIpAddress}`;
                 }
-                
-                if (rawInstData) {
-                    modalText += `\n\nInstance Type: ${rawInstData.InstanceType || 'N/A'}`;
-                    modalText += `\nState: ${rawInstData.State?.Name || 'N/A'}`;
-                    if(rawInstData.PrivateIpAddress) modalText += `\nPrivate IP: ${rawInstData.PrivateIpAddress}`;
-                    if(rawInstData.PublicIpAddress) modalText += `\nPublic IP: ${rawInstData.PublicIpAddress}`;
-                }
-
                 if (instanceDetailsFromMap.memberOfSGs && instanceDetailsFromMap.memberOfSGs.length > 0) {
-                    modalText += "\n\nMember of Security Groups:";
+                    modalBody.textContent += "\n\nMember of Security Groups:";
                     instanceDetailsFromMap.memberOfSGs.forEach(sg => {
-                        modalText += `\n- ${sg.name}`; 
+                        modalBody.textContent += `\n- ${sg.name}`; 
                     });
                 }
-                
-                modalTitle.textContent = `Details for ${instanceDetailsFromMap.originalName || nodeId}`;
-                modalBody.textContent = modalText; 
-                nodeDetailModal.style.display = "block";
             }
+            nodeDetailModal.style.display = "block";
         }
     });
 
@@ -541,9 +607,30 @@
     status.textContent = `Diagram ready (${globalNodes.length} nodes, ${globalEdges.length} connections).`;
   }
   
+  function arrangeNodesInCircle(nodesDataSet, containerWidth, containerHeight) {
+    const nodeArray = nodesDataSet.get();
+    if (nodeArray.length === 0) return;
+    const radiusFactor = nodeArray.length > 1 ? 2.5 : 1; 
+    const radius = Math.min(containerWidth / radiusFactor, containerHeight / radiusFactor, nodeArray.length * 40 + 30);
+    const angleStep = nodeArray.length > 1 ? (2 * Math.PI) / nodeArray.length : 0;
+    const updates = [];
+    nodeArray.forEach((node, index) => {
+        updates.push({
+            id: node.id,
+            x: nodeArray.length === 1 ? 0 : radius * Math.cos(index * angleStep), 
+            y: nodeArray.length === 1 ? 0 : radius * Math.sin(index * angleStep),
+            fixed: { x: true, y: true }
+        });
+    });
+    nodesDataSet.update(updates);
+}
+
+
   instanceFilterSelect.addEventListener("change", function () {
     if (!isGraphReady || !network) { status.textContent = "Generate diagram first."; this.value = ""; return; }
     currentFocusedInstanceId = this.value; 
+    unusedSgListContainer.style.display = currentFocusedInstanceId ? 'none' : 'block';
+
 
     if (!currentFocusedInstanceId) { 
       status.textContent = "Displaying full diagram based on state filter...";
@@ -555,35 +642,25 @@
     status.textContent = `Filtering for ${selectedInstanceName}...`;
     
     baseFilteredNodes.clear(); baseFilteredEdges.clear(); 
-    const nodePortDisplayInfo = new Map();
     const focusedNodeOriginal = globalNodes.get(currentFocusedInstanceId);
 
     if (!focusedNodeOriginal) { status.textContent = `Error: Instance ${selectedInstanceName} not found.`; this.value = ""; return; }
+    baseFilteredNodes.add({...focusedNodeOriginal}); 
 
     const connectedNodesForDropdown = new Map(); 
 
     globalEdges.forEach(edge => { 
       let currentEdgeToAdd = null; let connectedNodeId = null;
-      const sgDisplayName = edge.sgNameData || "Unknown SG"; 
+      const sgDisplayName = edge.label.split('\n')[1]?.replace('(via ','').replace(')','') || edge.sgNameData || "Unknown SG"; 
 
       if (edge.from === currentFocusedInstanceId && edge.to !== currentFocusedInstanceId) { 
         connectedNodeId = edge.to;
-        currentEdgeToAdd = { ...edge, id: edge.id + "_fp", label: sgDisplayName, color: { color: 'green', highlight: '#388E3C' }, smooth: { type: 'straightCross' } };
-        if (!nodePortDisplayInfo.has(currentFocusedInstanceId)) nodePortDisplayInfo.set(currentFocusedInstanceId, { labelLines: new Set() });
-        nodePortDisplayInfo.get(currentFocusedInstanceId).labelLines.add(`Out to ${instanceMap[edge.to]?.originalName || edge.to}: ${edge.protocolPortData} (via ${edge.sgNameData})`);
-        if (!nodePortDisplayInfo.has(edge.to)) nodePortDisplayInfo.set(edge.to, { labelLines: new Set() });
-        nodePortDisplayInfo.get(edge.to).labelLines.add(`In from ${instanceMap[currentFocusedInstanceId]?.originalName || currentFocusedInstanceId}: ${edge.protocolPortData} (via ${edge.sgNameData})`);
+        currentEdgeToAdd = { ...edge, id: edge.id + "_fp", label: sgDisplayName, color: { color: 'green', highlight: '#388E3C' }};
       } else if (edge.to === currentFocusedInstanceId && edge.from !== currentFocusedInstanceId) { 
         connectedNodeId = edge.from;
-        currentEdgeToAdd = { ...edge, id: edge.id + "_fp", label: sgDisplayName, color: { color: 'red', highlight: '#D32F2F' }, smooth: { type: 'straightCross' } };
-        if (!nodePortDisplayInfo.has(currentFocusedInstanceId)) nodePortDisplayInfo.set(currentFocusedInstanceId, { labelLines: new Set() });
-        nodePortDisplayInfo.get(currentFocusedInstanceId).labelLines.add(`In from ${instanceMap[edge.from]?.originalName || edge.from}: ${edge.protocolPortData} (via ${edge.sgNameData})`);
-        if (!nodePortDisplayInfo.has(edge.from)) nodePortDisplayInfo.set(edge.from, { labelLines: new Set() });
-        nodePortDisplayInfo.get(edge.from).labelLines.add(`Out to ${instanceMap[currentFocusedInstanceId]?.originalName || currentFocusedInstanceId}: ${edge.protocolPortData} (via ${edge.sgNameData})`);
+        currentEdgeToAdd = { ...edge, id: edge.id + "_fp", label: sgDisplayName, color: { color: 'red', highlight: '#D32F2F' }};
       } else if (edge.from === currentFocusedInstanceId && edge.to === currentFocusedInstanceId) { 
          currentEdgeToAdd = { ...edge, id: edge.id + "_fp", label: sgDisplayName, color: { color: 'purple', highlight: '#7B1FA2' }, smooth: { type: 'cubicBezier', roundness: 0.7 } };
-         if (!nodePortDisplayInfo.has(currentFocusedInstanceId)) nodePortDisplayInfo.set(currentFocusedInstanceId, { labelLines: new Set() });
-         nodePortDisplayInfo.get(currentFocusedInstanceId).labelLines.add(`Self: ${edge.protocolPortData} (via ${edge.sgNameData})`);
       }
 
       if (currentEdgeToAdd) {
@@ -593,35 +670,22 @@
           if (originalNode && !baseFilteredNodes.get(connectedNodeId)) { 
              baseFilteredNodes.add({...originalNode }); 
              if (!connectedNodesForDropdown.has(connectedNodeId)) {
-                connectedNodesForDropdown.set(connectedNodeId, instanceMap[connectedNodeId]?.originalName || connectedNodeId);
+                const connectedNodeLabel = originalNode.label.split('\n')[0]; 
+                connectedNodesForDropdown.set(connectedNodeId, connectedNodeLabel);
              }
           }
         }
       }
     });
     
-    let focusedLabel = focusedNodeOriginal.label.split('\n')[0]; 
-    const focusedInfo = nodePortDisplayInfo.get(currentFocusedInstanceId);
-    if (focusedInfo && focusedInfo.labelLines.size > 0) focusedLabel += '\n' + Array.from(focusedInfo.labelLines).sort().join('\n');
+    const { nodesWithUpdatedInfo, edgesWithUpdatedInfo } = rebuildLabelsAndPositions(
+        new vis.DataSet(baseFilteredNodes.get()), 
+        baseFilteredEdges,
+        currentFocusedInstanceId,
+        circularFilteredViewCheckbox.checked
+    );
     
-    if (!baseFilteredNodes.get(currentFocusedInstanceId)) {
-        baseFilteredNodes.add({...focusedNodeOriginal, label: focusedLabel, x: -500, y: 0, fixed: {x:true, y:true}, font: {size:10, multi:true, align:'left', vadjust: -5}});
-    } else {
-        baseFilteredNodes.updateOnly({id: currentFocusedInstanceId, label: focusedLabel, x: -500, y: 0, fixed: {x:true, y:true}, font: {size:10, multi:true, align:'left', vadjust: -5}});
-    }
-
-    const connectedNodesArray = baseFilteredNodes.get({ filter: n => n.id !== currentFocusedInstanceId });
-    const verticalSpacing = Math.max(80, 15 * (focusedInfo?.labelLines.size || 1) + 60) ; 
-    const initialY = -((connectedNodesArray.length - 1) * verticalSpacing) / 2;
-
-    connectedNodesArray.forEach((nodeData, index) => {
-      let connectedNodeDisplayLabel = globalNodes.get(nodeData.id).label.split('\n')[0]; 
-      const connectedInfo = nodePortDisplayInfo.get(nodeData.id);
-      if (connectedInfo && connectedInfo.labelLines.size > 0) connectedNodeDisplayLabel += '\n' + Array.from(connectedInfo.labelLines).sort().join('\n');
-      baseFilteredNodes.updateOnly({id: nodeData.id, label: connectedNodeDisplayLabel, x: 500, y: initialY + index * verticalSpacing, fixed: {x:true, y:true}, font: {size:10, multi:true, align:'left', vadjust: -5}});
-    });
-    
-    updateNetworkView(baseFilteredNodes, baseFilteredEdges, `Filtered for ${selectedInstanceName}.`);
+    updateNetworkView(nodesWithUpdatedInfo, edgesWithUpdatedInfo, `Filtered for ${selectedInstanceName}.`);
     secondaryFiltersContainer.style.display = 'flex';
     populateConnectedNodeFilter(connectedNodesForDropdown); resetSecondaryFilterInputs(); 
   });
@@ -644,16 +708,17 @@
   applySecondaryFiltersBtn.addEventListener('click', applyAdvancedFilters);
   resetSecondaryFiltersBtn.addEventListener('click', () => {
     resetSecondaryFilterInputs();
-    const selectedInstanceName = instanceMap[currentFocusedInstanceId]?.name || currentFocusedInstanceId;
-    const { nodesWithUpdatedLabels } = rebuildLabelsForView(new vis.DataSet(baseFilteredNodes.get()), baseFilteredEdges, currentFocusedInstanceId);
-    
-    const finalNodesForReset = new vis.DataSet();
-    nodesWithUpdatedLabels.forEach(node => {
-        const baseNode = baseFilteredNodes.get(node.id); 
-        finalNodesForReset.add({...node, x: baseNode.x, y: baseNode.y, fixed: baseNode.fixed, color: baseNode.color }); 
-    });
-    updateNetworkView(finalNodesForReset, baseFilteredEdges, `Sub-filters reset. Showing all connections for ${selectedInstanceName}.`);
+    const event = new Event('change'); 
+    instanceFilterSelect.dispatchEvent(event);
   });
+
+  circularFilteredViewCheckbox.addEventListener('change', () => {
+    if (currentFocusedInstanceId) { 
+        const event = new Event('change'); 
+        instanceFilterSelect.dispatchEvent(event);
+    }
+  });
+
 
   function applyAdvancedFilters() {
     if (!currentFocusedInstanceId || baseFilteredNodes.length === 0) { status.textContent = "No primary selection."; return; }
@@ -694,34 +759,15 @@
     const subFilteredNodesData = baseFilteredNodes.get({ filter: node => subFilteredNodeIds.has(node.id) });
     let finalSubFilteredNodes = new vis.DataSet(subFilteredNodesData);
     
-    const { nodesWithUpdatedLabels, edgesWithUpdatedInfo } = rebuildLabelsForView(finalSubFilteredNodes, subFilteredEdges, currentFocusedInstanceId);
+    const { nodesWithUpdatedInfo, edgesWithUpdatedInfo } = rebuildLabelsAndPositions(
+        finalSubFilteredNodes, 
+        subFilteredEdges,
+        currentFocusedInstanceId,
+        circularFilteredViewCheckbox.checked
+    );
     
-    let nodesToDisplay = new vis.DataSet(); 
-    nodesWithUpdatedLabels.forEach(node => {
-        const baseNode = baseFilteredNodes.get(node.id) || globalNodes.get(node.id); 
-        const color = baseNode ? baseNode.color : getNodeColorByState(instanceMap[node.id]?.data); 
-        nodesToDisplay.add({...node, color: color });
-    });
-
-
-    if (nodesToDisplay.length > 0 && nodesToDisplay.length <= 3 && currentFocusedInstanceId) {
-        const adjustedNodes = new vis.DataSet();
-        const focusedNodeData = nodesToDisplay.get(currentFocusedInstanceId);
-        if (focusedNodeData) adjustedNodes.add({...focusedNodeData, x: -250, y: 0, fixed: {x:true, y:true}}); 
-        
-        const connectedNodesInView = nodesToDisplay.get({filter: n => n.id !== currentFocusedInstanceId});
-        const verticalSpacing = 150;
-        const initialYSmall = -((connectedNodesInView.length - 1) * verticalSpacing) / 2;
-
-        connectedNodesInView.forEach((node, idx) => {
-            adjustedNodes.add({...node, x: 250, y: initialYSmall + idx * verticalSpacing, fixed: {x:true, y:true}});
-        });
-        if (adjustedNodes.length > 0) nodesToDisplay = adjustedNodes;
-    }
-
-
     const selectedInstanceName = instanceMap[currentFocusedInstanceId]?.name || currentFocusedInstanceId;
-    updateNetworkView(nodesToDisplay, edgesWithUpdatedInfo, `Sub-filter applied for ${selectedInstanceName}.`);
+    updateNetworkView(nodesWithUpdatedInfo, edgesWithUpdatedInfo, `Sub-filter applied for ${selectedInstanceName}.`);
   }
 
   function checkPortMatch(edgePortRange, queryPort) {
@@ -734,84 +780,136 @@
     return false;
   }
   
-  function rebuildLabelsForView(currentNodes, currentEdges, focusedId) {
-    const nodePortDisplayInfo = new Map();
-    const nodesWithUpdatedLabels = new vis.DataSet();
+function rebuildLabelsAndPositions(currentDisplayNodes, currentDisplayEdges, focusedId, isCircularLayout) {
+    const nodeInteractionDetails = new Map(); 
+    const nodesWithUpdatedInfo = new vis.DataSet();
 
-    currentEdges.forEach(edge => {
+    currentDisplayNodes.forEach(node => {
+        const originalGlobalNode = globalNodes.get(node.id);
+        let baseLabel = node.label; 
+        let initialTitle = node.title; 
+
+        if (originalGlobalNode) {
+            baseLabel = originalGlobalNode.label; 
+            if ((isCircularLayout || !focusedId) ) { 
+                 baseLabel = originalGlobalNode.label.split('\n')[0];
+            }
+            initialTitle = originalGlobalNode.title; 
+        }
+        
+        nodeInteractionDetails.set(node.id, { 
+            connectionLines: new Set(), 
+            baseLabel: baseLabel,
+            initialTitle: initialTitle, 
+            originalNodeData: {...node} 
+        });
+    });
+
+    currentDisplayEdges.forEach(edge => {
         const [protocol, port] = edge.protocolPortData.split(':');
-        const fromNodeName = instanceMap[edge.from]?.originalName || edge.from;
-        const toNodeName = instanceMap[edge.to]?.originalName || edge.to;
+        const fromNodeId = edge.from;
+        const toNodeId = edge.to;
+        
+        const fromNodeGlobal = globalNodes.get(fromNodeId);
+        const toNodeGlobal = globalNodes.get(toNodeId);
+
+        const fromNodeName = instanceMap[fromNodeId]?.originalName || fromNodeGlobal?.label.split('\n')[0] || fromNodeId;
+        const toNodeName = instanceMap[toNodeId]?.originalName || toNodeGlobal?.label.split('\n')[0] || toNodeId;
         const viaSg = edge.sgNameData || "Unknown SG";
 
-        if (edge.from === focusedId && edge.to !== focusedId) { 
-            if (!nodePortDisplayInfo.has(focusedId)) nodePortDisplayInfo.set(focusedId, { labelLines: new Set() });
-            nodePortDisplayInfo.get(focusedId).labelLines.add(`Out to ${toNodeName}: ${protocol}:${port} (via ${viaSg})`);
-            if (!nodePortDisplayInfo.has(edge.to)) nodePortDisplayInfo.set(edge.to, { labelLines: new Set() });
-            nodePortDisplayInfo.get(edge.to).labelLines.add(`In from ${fromNodeName}: ${protocol}:${port} (via ${viaSg})`);
-        } else if (edge.to === focusedId && edge.from !== focusedId) { 
-            if (!nodePortDisplayInfo.has(focusedId)) nodePortDisplayInfo.set(focusedId, { labelLines: new Set() });
-            nodePortDisplayInfo.get(focusedId).labelLines.add(`In from ${fromNodeName}: ${protocol}:${port} (via ${viaSg})`);
-            if (!nodePortDisplayInfo.has(edge.from)) nodePortDisplayInfo.set(edge.from, { labelLines: new Set() });
-            nodePortDisplayInfo.get(edge.from).labelLines.add(`Out to ${toNodeName}: ${protocol}:${port} (via ${viaSg})`);
-        } else if (edge.from === focusedId && edge.to === focusedId) { 
-             if (!nodePortDisplayInfo.has(focusedId)) nodePortDisplayInfo.set(focusedId, { labelLines: new Set() });
-             nodePortDisplayInfo.get(focusedId).labelLines.add(`Self: ${protocol}:${port} (via ${viaSg})`);
+        const addDetail = (nodeIdToAddDetail, detailLine) => {
+            if (nodeInteractionDetails.has(nodeIdToAddDetail)) {
+                nodeInteractionDetails.get(nodeIdToAddDetail).connectionLines.add(detailLine);
+            }
+        };
+
+        if (fromNodeId === focusedId) { // Outbound from focused
+            addDetail(focusedId, `Out to ${toNodeName}: ${protocol}:${port} (via ${viaSg})`);
+            addDetail(toNodeId, `In from ${fromNodeName}: ${protocol}:${port} (via ${viaSg})`);
+        } else if (toNodeId === focusedId) { // Inbound to focused
+            addDetail(focusedId, `In from ${fromNodeName}: ${protocol}:${port} (via ${viaSg})`);
+            addDetail(fromNodeId, `Out to ${toNodeName}: ${protocol}:${port} (via ${viaSg})`);
         }
     });
     
-    currentNodes.forEach(node => {
-        const originalNodeGlobal = globalNodes.get(node.id); 
-        if (!originalNodeGlobal) { 
-            nodesWithUpdatedLabels.add(node); 
-            return;
+    currentDisplayNodes.forEach(node => {
+        const details = nodeInteractionDetails.get(node.id);
+        let finalLabel = details.baseLabel;
+        let finalTitle = details.initialTitle; 
+
+        if (details.connectionLines.size > 0) {
+            const connectionSummary = Array.from(details.connectionLines).sort().join('\n');
+            finalTitle += '\n\nConnections (to/from focused):\n' + connectionSummary;
+            if (!isCircularLayout && focusedId) { 
+                finalLabel += '\n' + connectionSummary;
+            }
         }
-        let newLabel = originalNodeGlobal.label.split('\n')[0]; 
-        const portInfo = nodePortDisplayInfo.get(node.id);
-        if (portInfo && portInfo.labelLines.size > 0) {
-            newLabel += '\n' + Array.from(portInfo.labelLines).sort().join('\n');
-        }
-        nodesWithUpdatedLabels.add({...node, label: newLabel }); 
+        
+        nodesWithUpdatedInfo.add({
+            ...details.originalNodeData, 
+            label: finalLabel, 
+            title: finalTitle,
+            font: {size:10, multi:true, align:'left', vadjust: -5} 
+        });
     });
-    return { nodesWithUpdatedLabels: nodesWithUpdatedLabels, edgesWithUpdatedInfo: currentEdges };
-  }
+
+    if (isCircularLayout && nodesWithUpdatedInfo.length > 0) {
+        const networkContainer = document.getElementById('network');
+        arrangeNodesInCircle(nodesWithUpdatedInfo, networkContainer.clientWidth, networkContainer.clientHeight);
+    } else if (nodesWithUpdatedInfo.length > 0 && focusedId) { 
+        const focusedNodeUpdate = nodesWithUpdatedInfo.get(focusedId);
+        if(focusedNodeUpdate) nodesWithUpdatedInfo.updateOnly({id: focusedId, x: -500, y: 0, fixed: {x:true, y:true}});
+        
+        const connectedNodesForPos = nodesWithUpdatedInfo.get({ filter: n => n.id !== focusedId });
+        const vSpacing = Math.max(80, 15 * (nodeInteractionDetails.get(focusedId)?.connectionLines.size || 1) + 60);
+        const initY = -((connectedNodesForPos.length - 1) * vSpacing) / 2;
+        connectedNodesForPos.forEach((node, index) => {
+            nodesWithUpdatedInfo.updateOnly({id: node.id, x: 500, y: initY + index * vSpacing, fixed: {x:true, y:true}});
+        });
+    }
+
+    return { nodesWithUpdatedInfo: nodesWithUpdatedInfo, edgesWithUpdatedInfo: currentDisplayEdges };
+}
+
 
   function updateNetworkView(nodesToDisplay, edgesToDisplay, statusMessage) {
     let finalEdges = new vis.DataSet(edgesToDisplay.get()); 
+    let defaultEdgeSmooth = circularFilteredViewCheckbox.checked && currentFocusedInstanceId ? 
+                           { type: "cubicBezier", forceDirection: 'none', roundness: 0.2 } : 
+                           { type: 'straightCross', roundness: 0 };
 
-    if (nodesToDisplay.length === 2 && currentFocusedInstanceId) {
+    finalEdges.forEach(edge => { 
+        finalEdges.updateOnly({id: edge.id, smooth: defaultEdgeSmooth});
+    });
+
+    if (nodesToDisplay.length === 2 && currentFocusedInstanceId && !circularFilteredViewCheckbox.checked) { 
         const nodeIds = nodesToDisplay.getIds();
-        if (nodeIds.length === 2) {
+        if (nodeIds.length === 2) { 
             const nodeA = nodeIds[0]; const nodeB = nodeIds[1];
-            const isFocusedPair = (nodeA === currentFocusedInstanceId && nodeB !== currentFocusedInstanceId) || 
-                                  (nodeB === currentFocusedInstanceId && nodeA !== currentFocusedInstanceId);
-            
-            if (isFocusedPair) {
-                const edgesBetweenPair = finalEdges.get({
-                    filter: edge => ((edge.from === nodeA && edge.to === nodeB) || (edge.from === nodeB && edge.to === nodeA))
-                });
+            const edgesBetweenPair = finalEdges.get({
+                filter: edge => ((edge.from === nodeA && edge.to === nodeB) || (edge.from === nodeB && edge.to === nodeA))
+            });
 
-                if (edgesBetweenPair.length === 2) { 
-                    let firstEdgeDirection = null;
-                    edgesBetweenPair.forEach((edge, index) => {
-                        let updatedSmooth;
-                        if (index === 0) { 
-                            updatedSmooth = { type: 'curvedCW', roundness: 0.2, forceDirection: 'none' };
-                            firstEdgeDirection = (edge.from === currentFocusedInstanceId) ? 'outbound' : 'inbound';
+            if (edgesBetweenPair.length === 2) { 
+                let firstEdgeDirection = null;
+                edgesBetweenPair.forEach((edge, index) => {
+                    let updatedSmooth;
+                    if (index === 0) { 
+                        updatedSmooth = { type: 'curvedCW', roundness: 0.2, forceDirection: 'none' };
+                        firstEdgeDirection = (edge.from === currentFocusedInstanceId) ? 'outbound' : 'inbound';
+                    } else { 
+                        if (firstEdgeDirection === 'outbound' && edge.to === currentFocusedInstanceId) { 
+                            updatedSmooth = { type: 'curvedCCW', roundness: 0.2, forceDirection: 'none' };
+                        } else if (firstEdgeDirection === 'inbound' && edge.from === currentFocusedInstanceId) { 
+                            updatedSmooth = { type: 'curvedCCW', roundness: 0.2, forceDirection: 'none' };
                         } else { 
-                            if (firstEdgeDirection === 'outbound' && edge.to === currentFocusedInstanceId) { 
-                                updatedSmooth = { type: 'curvedCCW', roundness: 0.2, forceDirection: 'none' };
-                            } else if (firstEdgeDirection === 'inbound' && edge.from === currentFocusedInstanceId) { 
-                                updatedSmooth = { type: 'curvedCCW', roundness: 0.2, forceDirection: 'none' };
-                            } else { 
-                                updatedSmooth = { type: 'curvedCCW', roundness: 0.2, forceDirection: 'none' };
-                            }
+                            updatedSmooth = { type: 'curvedCCW', roundness: 0.2, forceDirection: 'none' };
                         }
-                        finalEdges.updateOnly({id: edge.id, smooth: updatedSmooth});
-                    });
-                } else if (edgesBetweenPair.length === 1) { 
-                     finalEdges.updateOnly({id: edgesBetweenPair[0].id, smooth: { type: 'straightCross', roundness: 0 }});
-                }
+                    }
+                    finalEdges.updateOnly({id: edge.id, smooth: updatedSmooth});
+                });
+            } else if (edgesBetweenPair.length === 1) { 
+                 finalEdges.updateOnly({id: edgesBetweenPair[0].id, smooth: { type: 'straightCross', roundness: 0 }});
             }
         }
     }
